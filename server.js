@@ -10,8 +10,6 @@ dotenv.config();
 const app = express();
 const upload = multer({ dest: "uploads/" });
 
-app.use(express.json());
-
 // Python OCR microservice endpoint
 const PYTHON_OCR_URL = "http://localhost:8000/extract";
 
@@ -28,10 +26,10 @@ app.post("/analyze-report", upload.single("file"), async (req, res) => {
     let extractedText = "";
 
     if (req.body.text_input) {
-      // Case 1: Direct text input
+      // Case 1: Direct text input (from textarea)
       extractedText = req.body.text_input;
     } else if (req.file) {
-      // Case 2: Image input → send to Python OCR service
+      // Case 2: File input → send to Python OCR service
       const fileStream = fs.createReadStream(req.file.path);
 
       const formData = new FormData();
@@ -89,7 +87,7 @@ ${extractedText}
 
     // Call Gemini API
     const geminiResponse = await fetch(
-      `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
+      ${GEMINI_URL}?key=${process.env.GEMINI_API_KEY},
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,23 +99,29 @@ ${extractedText}
 
     if (!geminiResponse.ok) {
       const errText = await geminiResponse.text();
-      return res.status(500).json({ error: "Gemini API failed", details: errText });
+      return res
+        .status(500)
+        .json({ error: "Gemini API failed", details: errText });
     }
 
     const geminiData = await geminiResponse.json();
 
     let summaryText =
-      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "No summary found";
+      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "No summary found";
 
-    // Remove markdown or extra characters if any
-    summaryText = summaryText.replace(/```json|```/g, "").trim();
+    // Remove markdown fences if any
+    summaryText = summaryText.replace(/json|/g, "").trim();
 
     // Parse JSON safely
     let summaryJson;
     try {
       summaryJson = JSON.parse(summaryText);
     } catch (parseErr) {
-      return res.status(500).json({ error: "Failed to parse Gemini output as JSON", raw: summaryText });
+      return res.status(500).json({
+        error: "Failed to parse Gemini output as JSON",
+        raw: summaryText,
+      });
     }
 
     res.json({
