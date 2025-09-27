@@ -10,6 +10,10 @@ dotenv.config();
 const app = express();
 const upload = multer({ dest: "uploads/" });
 
+// Middleware to handle text input (form-data + JSON)
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
 // Python OCR microservice endpoint
 const PYTHON_OCR_URL = "http://localhost:8000/extract";
 
@@ -50,7 +54,7 @@ app.post("/analyze-report", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "No text or image provided" });
     }
 
-    // Build the prompt for clean JSON output
+    // Build the prompt
     const prompt = `
 You are a medical report simplifier. Summarize the following lab results in patient-friendly language (no diagnosis, just observations). 
 Return ONLY a JSON object (no explanations, no markdown) with this structure:
@@ -87,7 +91,7 @@ ${extractedText}
 
     // Call Gemini API
     const geminiResponse = await fetch(
-      ${GEMINI_URL}?key=${process.env.GEMINI_API_KEY},
+      `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -111,7 +115,7 @@ ${extractedText}
       "No summary found";
 
     // Remove markdown fences if any
-    summaryText = summaryText.replace(/json|/g, "").trim();
+    summaryText = summaryText.replace(/```json|```/g, "").trim();
 
     // Parse JSON safely
     let summaryJson;
