@@ -4,141 +4,161 @@ import fetch from "node-fetch";
 import fs from "fs";
 import dotenv from "dotenv";
 import FormData from "form-data";
+import cors from "cors";
+import { promisify } from "util";
 
 dotenv.config();
+const unlinkAsync = promisify(fs.unlink);
 
 const app = express();
-const upload = multer({ dest: "uploads/" });
 
-// Middleware to handle text input (form-data + JSON)
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// -------- Config --------
+const PORT = process.env.PORT || 5000;
 
-// Python OCR microservice endpoint
-const PYTHON_OCR_URL = "http://localhost:8000/extract";
+// CORS: allow Vercel frontend + local Vite dev
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "https://medical-ai-simplifier-cg6q.vercel.app",
+];
 
-// Gemini REST endpoint
+app.use(
+  cors({
+    origin(origin, cb) {
+      // allow no-origin requests (curl, server-to-server)
+      if (!origin) return cb(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false, // you are not using cookies
+    maxAge: 86400,
+  })
+);
+
+// Explicitly respond to preflights (some proxies require this)
+app.options("*", cors());
+
+// Hardcoded OCR microservice URL (as requested)
+const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com/extract";
+
+// Gemini API key still comes from .env
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
-/**
- * POST /analyze-report
- * Accepts text OR image
- */
-app.post("/analyze-report", upload.single("file"), async (req, res) => {
+// Multer for uploads
+const upload = multer({
+  dest: "uploads/",
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+// Body parsers
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// Health route
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Utility: fetch with timeout
+const fetchWithTimeout = async (url, options = {}, ms = 30000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
   try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+};
+
+// -------- Main endpoint --------
+app.post("/analyze-report", upload.single("file"), async (req, res) => {
+  let tmpFilePath = null;
+
+  try {
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY missing" });
+    }
+
     let extractedText = "";
 
-    if (req.body.text_input) {
-      // Case 1: Direct text input (from textarea)
-      extractedText = req.body.text_input;
-    } else if (req.file) {
-      // Case 2: File input → send to Python OCR service
-      const fileStream = fs.createReadStream(req.file.path);
-
+    // Case 1: text input
+    if (req.body?.text_input && req.body.text_input.trim()) {
+      extractedText = req.body.text_input.trim();
+    }
+    // Case 2: file -> OCR service
+    else if (req.file) {
+      tmpFilePath = req.file.path;
       const formData = new FormData();
-      formData.append("file", fileStream, req.file.originalname);
+      formData.append("file", fs.createReadStream(tmpFilePath), req.file.originalname);
 
-      const response = await fetch(PYTHON_OCR_URL, {
-        method: "POST",
-        body: formData,
-      });
+      const ocrResp = await fetchWithTimeout(
+        PYTHON_OCR_URL,
+        { method: "POST", body: formData, headers: formData.getHeaders() },
+        45000
+      );
 
-      if (!response.ok) {
-        return res.status(500).json({ error: "OCR service failed" });
+      if (!ocrResp.ok) {
+        const errText = await ocrResp.text().catch(() => "");
+        return res.status(502).json({ error: "OCR service failed", details: errText });
       }
 
-      const data = await response.json();
-      extractedText = (data.tests_raw || []).join("\n");
+      const ocrJson = await ocrResp.json();
+      extractedText = (ocrJson.tests_raw || []).join("\n");
+      if (!extractedText) {
+        return res.status(422).json({ error: "OCR returned no text" });
+      }
     } else {
-      return res.status(400).json({ error: "No text or image provided" });
+      return res.status(400).json({ error: "Provide text_input or file" });
     }
 
-    // Build the prompt
+    // Build Gemini prompt
     const prompt = `
-You are a medical report simplifier. Summarize the following lab results in patient-friendly language (no diagnosis, just observations). 
-Return ONLY a JSON object (no explanations, no markdown) with this structure:
-
-{
-  "lab_results": {
-    "CBC": {
-      "hemoglobin": "...",
-      "white_blood_cells": "...",
-      "red_blood_cells": "..."
-    },
-    "liver_function": {
-      "ALT": "...",
-      "AST": "...",
-      "bilirubin": "..."
-    },
-    "kidney_function": {
-      "creatinine": "...",
-      "BUN": "..."
-    },
-    "cholesterol": {
-      "total_cholesterol": "...",
-      "HDL": "...",
-      "LDL": "...",
-      "triglycerides": "..."
-    }
-  }
-}
+You are a medical report simplifier. Summarize the following lab results in patient-friendly language (no diagnosis, just observations).
+Return ONLY a JSON object (no explanations, no markdown).
 
 Lab results:
 
 ${extractedText}
-    `;
+`.trim();
 
     // Call Gemini API
-    const geminiResponse = await fetch(
-      `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
+    const aiResp = await fetchWithTimeout(
+      `${GEMINI_URL}?key=${encodeURIComponent(GEMINI_API_KEY)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      },
+      45000
     );
 
-    if (!geminiResponse.ok) {
-      const errText = await geminiResponse.text();
-      return res
-        .status(500)
-        .json({ error: "Gemini API failed", details: errText });
+    if (!aiResp.ok) {
+      const t = await aiResp.text().catch(() => "");
+      return res.status(502).json({ error: "Gemini API failed", details: t || `HTTP ${aiResp.status}` });
     }
 
-    const geminiData = await geminiResponse.json();
+    const aiJson = await aiResp.json();
+    let textOut = aiJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    textOut = textOut.replace(/```json|```/g, "").trim();
 
-    let summaryText =
-      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "No summary found";
-
-    // Remove markdown fences if any
-    summaryText = summaryText.replace(/```json|```/g, "").trim();
-
-    // Parse JSON safely
-    let summaryJson;
+    let summary;
     try {
-      summaryJson = JSON.parse(summaryText);
-    } catch (parseErr) {
-      return res.status(500).json({
-        error: "Failed to parse Gemini output as JSON",
-        raw: summaryText,
-      });
+      summary = JSON.parse(textOut);
+    } catch {
+      return res.status(500).json({ error: "Failed to parse Gemini output", raw: textOut });
     }
 
-    res.json({
-      input_text: extractedText,
-      summary: summaryJson,
-      status: "ok",
-    });
+    res.json({ status: "ok", input_text: extractedText, summary });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: "Server error", details: String(err) });
+  } finally {
+    if (tmpFilePath) unlinkAsync(tmpFilePath).catch(() => {});
   }
 });
 
-app.listen(5000, () => {
-  console.log("Node.js service running on http://localhost:5000");
+// Start server
+app.listen(PORT, () => {
+  console.log(`Node.js service running on http://localhost:${PORT}`);
 });
