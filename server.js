@@ -6,12 +6,12 @@ import dotenv from "dotenv";
 import FormData from "form-data";
 import cors from "cors";
 
-
 dotenv.config();
 
 const app = express();
 const upload = multer({ dest: "uploads/" });
 app.use(cors());
+app.use(express.json()); // allow JSON bodies for text_input
 
 // Python OCR microservice endpoint
 const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com/extract";
@@ -56,8 +56,7 @@ app.post("/analyze-report", upload.single("file"), async (req, res) => {
     }
 
     // Build the prompt for clean JSON output
-// Build the prompt for clean JSON output
-const prompt = `
+    const prompt = `
 You are a medical report summarizer. 
 
 Instructions:
@@ -112,16 +111,14 @@ Rules:
 - Map tests carefully; if a test is missing, omit it.
 - Keep explanations concise and patient-friendly.
 
-
 Lab results:
 
 ${extractedText}
 `;
 
-
     // Call Gemini API
     const geminiResponse = await fetch(
-      ${GEMINI_URL}?key=${process.env.GEMINI_API_KEY},
+      `${GEMINI_URL}?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -146,11 +143,10 @@ ${extractedText}
 
     // Remove markdown fences if any
     console.log("Raw Gemini output:", summaryText);
-    // Remove markdown code fences like json ... 
-summaryText = summaryText
-  .replace(/json/g, "")
-  .replace(//g, "")
-  .trim();
+    summaryText = summaryText
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
 
     console.log("New Gemini output:", summaryText);
 
@@ -164,7 +160,8 @@ summaryText = summaryText
         raw: summaryText,
       });
     }
-    console.log(summaryJson) ; 
+
+    console.log(summaryJson);
     res.json({
       input_text: extractedText,
       summary: summaryJson,
