@@ -1,7 +1,7 @@
 **Summary**
 
 This project is called AI Medical Report Simplifier.
-It helps patients understand their medical reports easily. A user can either upload a file (PDF, JPG, PNG, TXT) or paste the text of the report. The system then sends this to the backend. The backend extracts important test results, checks if they are normal, low, or high, and gives a clear explanation in simple words using Gemini AI. The frontend shows the results neatly in a table with colored highlights.
+It helps patients understand their medical reports easily. A user can either upload a file or paste the text of the report. The system then sends this to the backend. The backend extracts important test results, checks if they are normal, low, or high, and gives a clear explanation in simple words using Gemini AI. The frontend shows the results neatly in a table with colored highlights.
 
 **Tech Stack Used**
 
