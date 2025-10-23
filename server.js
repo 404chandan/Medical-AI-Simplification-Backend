@@ -14,7 +14,8 @@ app.use(cors());
 app.use(express.json()); // allow JSON bodies for text_input
 
 // Python OCR microservice endpoint
-const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com/extract";
+// const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com/extract";
+const PYTHON_OCR_URL="https://medical-report-ocr-production.up.railway.app";
 
 // Gemini REST endpoint
 const GEMINI_URL =
@@ -176,3 +177,11 @@ ${extractedText}
 app.listen(5000, () => {
   console.log("Node.js service running on http://localhost:5000");
 });
+
+// Backend deployment - https://plum-backend-main.onrender.com
+// OCR Extraction deployment - https://img-to-text-main-1.onrender.com/extract
+
+// Check 1 : Image to text Extraction : curl.exe -X POST "https://img-to-text-main-1.onrender.com/extract" -F "file=@C:\Users\chand\Desktop\plum_backend-main\uploads\medical_report.png"
+// Check 2 : text to simplification : curl.exe -X POST "https://plum-backend-main.onrender.com/analyze-report" -H "Content-Type: application/json" -d "{\"text_input\":\"CBC: Hemoglobin 10.2 g/dL (Low), WBC 11200 /uL (High)\"}"
+// Check 3 : Image to text to simplification using Gemini API : curl.exe -X POST "https://plum-backend-main.onrender.com/analyze-report" -F "file=@C:\Users\chand\Desktop\plum_backend-main\uploads\medical_report.png"
+
