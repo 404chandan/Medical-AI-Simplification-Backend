@@ -16,7 +16,7 @@ app.use(cors());
 
 const upload = multer({ dest: "uploads/" });
 
-const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com";
+const PYTHON_OCR_URL = "https://img-to-text-main-1.onrender.com/extract";
 const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
